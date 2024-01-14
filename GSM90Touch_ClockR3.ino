@@ -95,7 +95,7 @@ uint16_t currentTime[7] = {0};
 int baudSelect[5] = {300, 1200, 4800, 9600, 19200};
 
 // If these default values are altered during run-time
-// they are are stored in EEPROM and the updated values used
+// they are stored in EEPROM and the updated values used
 // for subsequent runs after reset/power cycle
 int tune = 50;
 int repeats = 8;
@@ -103,10 +103,10 @@ int baudIndex = 3;  // default baudrate = 9600
 int i = 0;
 
 // GSM90F_timeout must be at least 3.5 seconds; set the sum of the two GSM90* values to give desired sampling rate
-// trial and error provided the values below for a 10 s sampling rate
-// Increase GSM90F_timeout to 4000.  3500 times-out for "a" quality readings with older-style magnetometers (it works OK for newer mags) 2023-12-05
-// Decrease GSM90_sampling_delay from 3500 to 3000 as a compromise between older-style and newer-style instruments to maintain close to 10 second samples
-int GSM90F_sampling_delay = 3000, GSM90F_timeout = 4000, short_delay = 40;
+// trial and error provided the values below for about 10 s sampling rate
+// GSM90F_timeout of 3500 times-out for "a" quality readings with older-style magnetometers (it works OK for newer mags)
+// Decrease GSM90_sampling_delay from 3500 to 3250 as a compromise between older-style and newer-style instruments to maintain close to 10 second samples
+int GSM90F_sampling_delay = 3250, GSM90F_timeout = 4000, short_delay = 40;
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // get touch locations (AdaFruit)
@@ -705,17 +705,12 @@ void print_time(uint16_t time[7], bool flag) {
 /////////////////////////////////////////////////////////////////////////////////
 void setup(void)
 {
-    Serial.begin(9600);
-// start up the RT clock before doing anything with the screen
-   while( !(DS1307.begin()) ){
-    Serial.println("Communication with RTC failed, please check connection");
-    delay(3000);
-  }
+   Serial.begin(9600);
 // read TFT screen ID
-  uint16_t ID = tft.readID();
+   uint16_t ID = tft.readID();
 // initialise the TFT screen object    
-    tft.begin(ID);
-    tft.setRotation(0);            // PORTRAIT
+   tft.begin(ID);
+   tft.setRotation(0);            // PORTRAIT
     
 //  position(X,Y) , shape(X,Y) , colour(EDGE, BODY, FONT),  text, text size 
 // "position" is the CENTRE of the button rectangle
@@ -730,21 +725,34 @@ void setup(void)
      sel_btn.initButton(&tft,120,  80, 150, 60, WHITE, GREEN, BLACK, "Select", 3);
 
 // Read obs data from EEPROM
-  readEEPROM();
+   readEEPROM();
 
-  tft.fillScreen(WHITE);   
-  tft.setTextColor(BLACK);  
-  tft.setTextSize(2);
-  tft.setCursor(30, 30); tft.print(F("Screen ID 0x")); tft.println(ID, HEX);
-  tft.setTextSize(3);
-  tft.setCursor(30,50 ); tft.print(F("GA GEOMAG"));
-  tft.setTextSize(2);
-  tft.setCursor(30, 90); tft.print(F("GSM90 Interface"));
-  tft.setCursor(30, 120);
-  tft.print(F("Version ")); tft.println(_VERSION);    
-  tft.setCursor(30, 150); tft.print(F("Tune: ")); tft.println(tune);
-  tft.setCursor(30, 180); tft.print(F("Baud: ")); tft.println(baudSelect[baudIndex]);
-  tft.setCursor(30, 210); tft.print(F("# Obs: ")); tft.println(repeats);
+   tft.fillScreen(WHITE);   
+   tft.setTextColor(BLACK);  
+   tft.setTextSize(2);
+   tft.setCursor(30, 30); tft.print(F("Screen ID 0x")); tft.println(ID, HEX);
+   tft.setTextSize(3);
+   tft.setCursor(30,50 ); tft.print(F("GA GEOMAG"));
+   tft.setTextSize(2);
+   tft.setCursor(30, 90); tft.print(F("GSM90 Interface"));
+   tft.setCursor(30, 120);
+   tft.print(F("Version ")); tft.println(_VERSION);    
+   tft.setCursor(30, 150); tft.print(F("Tune: ")); tft.println(tune);
+   tft.setCursor(30, 180); tft.print(F("Baud: ")); tft.println(baudSelect[baudIndex]);
+   tft.setCursor(30, 210); tft.print(F("# Obs: ")); tft.println(repeats);
+
+// start up the RT clock and report status: 
+// Error check only works for comms error - if there is no RTC or no power to RTC 
+// then DS1307.begin does not return and error message is not displayed.
+     while ( !(DS1307.begin()) ){
+     tft.setCursor(30, 240);
+     tft.setTextColor(RED);
+     tft.print(F("RTC comms failed   Check connection"));
+     delay(1000);
+   }
+   tft.setCursor(30, 240);
+   tft.print(F("RTC OK"));
+
   delay(5000);
   main_menu();
 }
