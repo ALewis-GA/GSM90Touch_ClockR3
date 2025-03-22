@@ -10,29 +10,33 @@
 // 
 // Serial Comms to GSM90 magnetometer for std absolute observations with TFT touch screen display
 // assumes: Arduino Mega 2560 R3
-//        : TFT LCD TouchScreen 240 x 320  ID 0x9595 05 Ox8230 (Jaycar XC4630)
+//        : TFT LCD TouchScreen 240 x 320  ID 0x9595 or 0x8230 (Jaycar XC4630)
 //        : RS-232 shield (must be enabled with on-board switch) (Core Electronics DFR0258)
-//        : Adafruit_GFX library; TouchScreen library; EEPROM Library; DFRobit RTC library
-//        : MCUFriend-kbv library
-//        : DFRobot DS1307 "Gravity" RTC module with CR1202 backup battery
-//        : The RT clock modeule can be powered from VCC and GND pins accessible on RS-232 shield but this
-//        : requires and angled 2 or 4-pin header block to connect onto the RS-232 pins.
+//        : DFRobot DS1307 "Gravity" RTC module with CR1202 backup battery (Core Electronics DFR0151)
+//        : Adafruit_GFX library; TouchScreen library; EEPROM Library; DFRobit RTC library; MCUFriend-kbv library
+//  
+//        : The RT clock module can be powered from VCC and GND pins accessible on RS-232 shield but this
+//        : requires and angled 2 or 4-pin header block to connect onto the RS-232 pins. (eg Core Electronics POLOLU-2702)
+//        : Entire assembly has been boxed into "Easy Assembly Electronics Enclosure size 4 150 x 90x 50" (Core Electronics CE08525 )
 //
 // With disabled RS-232 shield all serial comms are 
 // directed to Arduino IDE GUI and can be viewed from the "serial monitor" in the 
 // for checking/debugging.
 // Menu control via TouchScreen buttons to set RTC clock time, adjust Baud_rate, 
 // adjust magnetometer_tune_value (in microTesla) and adjust number_of_obs_per_run. 
-// The current value of the latter three  variables are stored to persistent EEPROM
+// The current value of the latter three variables are stored to persistent EEPROM
 // memory whenever they are updated and are used after reboot/power cycle.
 // RS-232 parity, data_bits, stop_bits are hardwired into code as N81
 // Magnetometer sampling interval is hardwired at about 10 seconds
+//
 //
 // Version 1.1 2022-10-18 increase wait period at end of comms
 // Version 1.3 2022-11-08 include serial buffer flush before/after "T" and after "F" command
 // Version 1.4 2023-04-16 more info displayed to TFT screen, none displayed to serial monitor at start up
 // Version 1.5 2023-12-05 increase GSM90F_timeout from 3500 to 4000 to work with older style magnetometers
 // Version 2.0 2024-01    Incorporate DS1307 RT Clock on Mega R3
+// Version 2.1 2024-04-06 Change initialisation of year_old,...sec_old to ensure RTC clock setting always works
+// Version 2.2 2025-03   Improved clock display on main screen
 ******************************************************************/
 // Graphics library
 #include <Adafruit_GFX.h>
@@ -51,7 +55,7 @@ MCUFRIEND_kbv tft;
 #include <EEPROM.h>
 
 // Set software version number
-#define _VERSION 2.0
+#define _VERSION 2.2
 
 // Touch screen pressure limits
 #define MINPRESSURE 200
@@ -74,7 +78,7 @@ MCUFRIEND_kbv tft;
     const int XP=8,XM=A2,YP=A3,YM=9; //240x320 ID=0x9595
     const int TS_LEFT=910,TS_RT=107,TS_TOP=84,TS_BOT=905;
 
-// Define a TouchScreen objectl resisance measured at 351 Ohms, (default value of 300 works OK)
+// Define a TouchScreen object  resisance measured at 351 Ohms, (default value of 300 works OK)
 TouchScreen ts = TouchScreen(XP, YP, XM, YM, 351);
 
 // Touch buttons to display on the screen
@@ -89,7 +93,8 @@ int pixel_x, pixel_y;     //Touch_getXY() updates global vars
 
 // RTC time constructor
 DFRobot_DS1307 DS1307;
-uint16_t currentTime[7] = {0};
+// set  current and previous different to time is displayed on first iteration
+uint16_t currentTime[7] = {0}, previousTime[7] = {61,61,25,0,0,0,9999};
 
 //Observatory specific parameters 
 int baudSelect[5] = {300, 1200, 4800, 9600, 19200};
@@ -105,8 +110,8 @@ int i = 0;
 // GSM90F_timeout must be at least 3.5 seconds; set the sum of the two GSM90* values to give desired sampling rate
 // trial and error provided the values below for about 10 s sampling rate
 // GSM90F_timeout of 3500 times-out for "a" quality readings with older-style magnetometers (it works OK for newer mags)
-// Decrease GSM90_sampling_delay from 3500 to 3000 as a compromise between older-style and newer-style instruments to maintain close to 10 second samples
-int GSM90F_sampling_delay = 3000, GSM90F_timeout = 4000, short_delay = 40;
+// Decrease GSM90_sampling_delay from 3500 to 2750 as a compromise between older-style and newer-style instruments to maintain close to 10 second samples
+int GSM90F_sampling_delay = 2750, GSM90F_timeout = 4000, short_delay = 40;
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // get touch locations (AdaFruit)
@@ -163,6 +168,9 @@ void main_menu(void) {
   baud_btn.drawButton(false);
   tune_btn.drawButton(false);
   obs_btn.drawButton(false);
+//Reset previousTime to ensure main menu time is re-written correctly
+   previousTime[0] = 61; previousTime[1] = 61; previousTime[2] = 25; 
+   previousTime[3] = 0; previousTime[4] = 0; previousTime[5] = 0; previousTime[6] = 9999;  
 }
 ///////////////////////////////////////////////////////////////
 // Display sub menu selection buttons  
@@ -424,7 +432,7 @@ void comms() {
 void RTclock() {
 
   int hour = 0, min = 0, sec = 0;
-  int year_old = 0, month_old = 0, day_old=0, hour_old = 0, min_old = 0, sec_old = 0;
+  int year_old = 100, month_old = 100,  day_old = 100, hour_old = 100, min_old = 100, sec_old = 100;
 // Get the current time  
   DS1307.getTime(currentTime);
 // If clock not started then year = 2000 - There maybe a function to check clock status  
@@ -432,8 +440,8 @@ void RTclock() {
   sub_menu();
    while (1) {
 // First set the year    
-      if ( currentTime[6]  < 2023)  currentTime[6] = 2050;
-      if ( currentTime[6]  > 2050)  currentTime[6] = 2023;
+      if ( currentTime[6]  < 2024)  currentTime[6] = 2100;
+      if ( currentTime[6]  > 2100)  currentTime[6] = 2024;
 // only update the screen if the value changes.      
       if (year_old != currentTime[6]) {
         tft.fillRect(00,250,240,70,CYAN);
@@ -691,7 +699,10 @@ void RTclock() {
 ////////////////////////////////////////////////////////////////////////////////
 // Display date and/or time on tft screen
 // print the date if flag = 1, otherwise dont print the year
-
+// up to V2.1  this was the only date/time display routine and it is still
+// used for displaying time with magnetometer data and time setting
+// but no longer on the main menu as it was necessary to re-write
+// entire string each time which caused unpleasant strobing effects 
 void print_time(uint16_t time[7], bool flag) {
   if (flag) {
      tft.print(time[6]);tft.print(F("-"));
@@ -701,6 +712,64 @@ void print_time(uint16_t time[7], bool flag) {
   if (time[2] < 10 )  tft.print(F("0")); tft.print(time[2]);  tft.print(":");
   if (time[1] < 10 )  tft.print(F("0")); tft.print(time[1]);  tft.print(":");
   if (time[0] < 10 )  tft.print(F("0")); tft.print(time[0]);
+}
+////////////////////////////////////////////////////////////////////////////////
+//
+// Display date and time on main menu without strobing
+// cursor locations for each element of the date/time decided by trial and error
+// will need adjustment for different font size
+// screen colours for erasing and re-writing are hard coded
+// "time" is the current date+time, "pTime" is the previous date+time
+//
+void home_time(uint16_t time[7], uint16_t pTime[7]) {
+ // year 
+  if (time[6] == pTime[6]) ;  // do nothing
+  else {   //erase old value and write new value
+     tft.setCursor(10,5); tft.setTextColor(BLUE);
+     tft.print(pTime[6]); tft.print(F("-"));
+     tft.setCursor(10,5); tft.setTextColor(BLACK);
+     tft.print(time[6]); tft.print(F("-"));
+  }
+// month
+  if (time[5] == pTime[5]) ;  // do nothing
+  else {   //erase old value and write new value
+     tft.setCursor(70,5); tft.setTextColor(BLUE);
+     if (pTime[5] < 10) tft.print(F("0")); tft.print(pTime[5]); tft.print("-");
+     tft.setCursor(70,5); tft.setTextColor(BLACK);
+     if (time[5] < 10) tft.print(F("0")); tft.print(time[5]); tft.print("-");
+  }   
+// day
+  if (time[4] == pTime[4]) ;  // do nothing
+  else {   //erase old value and write new value
+     tft.setCursor(105,5); tft.setTextColor(BLUE);
+     if (pTime[4] < 10) tft.print(F("0")); tft.print(pTime[4]); tft.print("T");
+     tft.setCursor(105,5); tft.setTextColor(BLACK);
+     if (time[4] < 10) tft.print(F("0")); tft.print(time[4]); tft.print("T");
+  } 
+//hour
+  if (time[2] == pTime[2]) ;  // do nothing
+  else {   //erase old value and write new value
+     tft.setCursor(140,5); tft.setTextColor(BLUE);
+     if (pTime[2] < 10) tft.print(F("0")); tft.print(pTime[2]); tft.print(":");
+     tft.setCursor(140,5); tft.setTextColor(BLACK);
+     if (time[2] < 10) tft.print(F("0")); tft.print(time[2]); tft.print(":");
+  }
+//min
+  if (time[1] == pTime[1]) ;  // do nothing
+  else {   //erase old value and write new value
+     tft.setCursor(175,5); tft.setTextColor(BLUE);
+     if (pTime[1] < 10) tft.print(F("0")); tft.print(pTime[1]); tft.print(":");
+     tft.setCursor(175,5); tft.setTextColor(BLACK);
+     if (time[1] < 10) tft.print(F("0")); tft.print(time[1]); tft.print(":");
+  }
+//sec
+  if (time[0] == pTime[0]) ;  // do nothing
+  else {   //erase old value and write new value
+     tft.setCursor(210,5); tft.setTextColor(BLUE);
+     if (pTime[0] < 10) tft.print(F("0")); tft.print(pTime[0]); 
+     tft.setCursor(210,5); tft.setTextColor(BLACK);
+     if (time[0] < 10) tft.print(F("0")); tft.print(time[0]);
+  }
 }
 /////////////////////////////////////////////////////////////////////////////////
 void setup(void)
@@ -778,18 +847,22 @@ void loop(void)
     if (obs_btn.justPressed())   obs();
     if (clock_btn.justPressed()) RTclock();
 
-// Display date and time at top of screen; the 250 mS delay
-// slows response to "touch" buttons, but keeps
-// time display "strobing" to an acceptable level
+// Display date and time at top of main menu screen;
   tft.setTextSize(2);
-  tft.setCursor(10, 5);
-  tft.setTextColor(BLACK);
+// tft.setCursor(10, 5);
+// tft.setTextColor(BLACK);
   DS1307.getTime(currentTime);
-  print_time(currentTime,1);
-  delay(250);
+  home_time(currentTime,previousTime);
+  for (i=0; i < 7; i++) previousTime[i] = currentTime[i];
+
+// following required only for "print_time" date and time display
+//
+// the 250 mS delay slows response to "touch" buttons, but keeps
+// time display "strobing" to an acceptable level
+//  delay(250);
 // Erase the time ready for overprint
-  tft.setCursor(10, 5);
-  tft.setTextColor(BLUE);
-  print_time(currentTime,1);
+// tft.setCursor(10, 5);
+// tft.setTextColor(BLUE);
+// print_time(currentTime,1);
 }
  
